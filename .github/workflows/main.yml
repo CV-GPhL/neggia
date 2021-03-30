@@ -1,0 +1,71 @@
+name: Build and Test
+
+on: [push, pull_request]
+
+jobs:
+  posix-cc:
+    strategy:
+      matrix:
+        build-type: [Debug, Release]
+        os: [macos-10.15, macos-latest, ubuntu-18.04, ubuntu-20.04]
+        include:
+          - build-type: Debug
+            debug-parsing: ON
+          - build-type: Release
+            debug-parsing: OFF
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+        with:
+          submodules: true
+      - name: Create Build Directory
+        run: cmake -E make_directory ${{github.workspace}}.build
+      - name: Configure CMake
+        run: cmake ${{github.workspace}} -DCMAKE_BUILD_TYPE=${{matrix.build-type}} -DDEBUG_PARSING=${{matrix.debug-parsing}}
+        working-directory: ${{github.workspace}}.build
+      - name: Build
+        run: cmake --build .
+        working-directory: ${{github.workspace}}.build
+      - name: Test
+        run: ctest --output-on-failure
+        working-directory: ${{github.workspace}}.build
+
+  posix-gcc:
+    strategy:
+      matrix:
+        include:
+          - build-type: Debug
+            gcc-version: 4.8
+            os: ubuntu-16.04
+          - build-type: Debug
+            gcc-version: 10
+            os: ubuntu-20.04
+          - build-type: Release
+            gcc-version: 4.8
+            os: ubuntu-16.04
+          - build-type: Release
+            gcc-version: 10
+            os: ubuntu-20.04
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Install Packages
+        run: sudo apt-get install -y gcc-${{ matrix.gcc-version }} g++-${{ matrix.gcc-version }}
+      - name: Checkout
+        uses: actions/checkout@v2
+        with:
+          submodules: true
+      - name: Create Build Directory
+        run: cmake -E make_directory ${{github.workspace}}.build
+      - name: Configure CMake
+        run: cmake ${{github.workspace}} -DCMAKE_BUILD_TYPE=${{matrix.build-type}} -DDEBUG_PARSING=ON
+        env:
+          CC: gcc-${{ matrix.gcc-version }}
+          CXX: g++-${{ matrix.gcc-version }}
+        working-directory: ${{github.workspace}}.build
+      - name: Build
+        run: cmake --build .
+        working-directory: ${{github.workspace}}.build
+      - name: Test
+        run: ctest --output-on-failure
+        working-directory: ${{github.workspace}}.build

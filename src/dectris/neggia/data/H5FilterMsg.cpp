@@ -1,80 +1,128 @@
-/**
-MIT License
-
-Copyright (c) 2017 DECTRIS Ltd.
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-*/
+// SPDX-License-Identifier: MIT
 
 #include "H5FilterMsg.h"
 #include <assert.h>
+#include <stdexcept>
 
-
-H5FilterMsg::H5FilterMsg(const char *fileAddress, size_t offset):
-   H5Object(fileAddress,offset)
-{
+H5FilterMsg::H5FilterMsg(const char* fileAddress, size_t offset)
+      : H5Object(fileAddress, offset) {
     this->_init();
 }
 
-H5FilterMsg::H5FilterMsg(const H5Object & obj): H5Object(obj)
-{
+H5FilterMsg::H5FilterMsg(const H5Object& obj) : H5Object(obj) {
     this->_init();
 }
 
-unsigned int H5FilterMsg::nFilters() const
-{
-   return uint8(1);
+uint8_t H5FilterMsg::version() const {
+    return read_u8(0);
 }
 
-uint16_t H5FilterMsg::filterId(int i) const
-{
-   return uint16(_offset[i]);
+unsigned int H5FilterMsg::nFilters() const {
+    return read_u8(1);
 }
 
-std::string H5FilterMsg::filterName(int i) const
-{
-   return std::string(address(_offset[i]+8));
+uint16_t H5FilterMsg::filterId(int i) const {
+    return _filters.at(i).id;
 }
 
-
-std::vector<int32_t> H5FilterMsg::clientData(int i) const
-{
-   unsigned int nameLength = uint16(_offset[i]+2);
-   uint16_t nClientDataValues = uint16(_offset[i]+6);
-   int32_t * array = (int32_t*) address(_offset[i]+8+nameLength);
-   return std::vector<int32_t>(array, array + nClientDataValues);
+std::string H5FilterMsg::filterName(int i) const {
+    return _filters.at(i).name;
 }
 
+std::vector<int32_t> H5FilterMsg::clientData(int i) const {
+    return _filters.at(i).client_data;
+}
 
+void H5FilterMsg::_init() {
+    switch (version()) {
+        case 1:
+            _initV1();
+            break;
+        case 2:
+            _initV2();
+            break;
+        default:
+            throw std::runtime_error("Filter Pipeline Message version " +
+                                     std::to_string(version()) +
+                                     " not supported.");
+    }
+}
 
-void H5FilterMsg::_init()
-{
-   assert(uint8(0) == 1); //VERSION 1
-   assert(uint16(2) == 0);
-   assert(uint32(4) == 0);
-   size_t filterOffset = 8;
-   for(size_t fId=0; fId<nFilters(); ++fId) {
-      _offset.push_back(filterOffset);
-      unsigned int nLength = uint16(filterOffset+2);
-      assert(nLength%8==0);
-      unsigned int nClientValues = uint16(filterOffset+6);
-      filterOffset += nLength + 4*nClientValues;
-      if(nClientValues%2) filterOffset += 4;
-   }
+void H5FilterMsg::_initV1() {
+    assert(read_u16(2) == 0);
+    assert(read_u32(4) == 0);
+    size_t currentOffset = 8;
+    for (size_t fId = 0; fId < nFilters(); ++fId) {
+        uint16_t filterId = read_u16(currentOffset);
+        uint16_t nameLength = read_u16(currentOffset + 2);
+        uint16_t nClientValues = read_u16(currentOffset + 6);
+        std::string name;
+        if (nameLength > 0) {
+            name = std::string(address() + currentOffset + 8);
+            // nameLength includes null-terminator and padding bytes
+            assert(name.size() <= nameLength);
+        }
+
+        int32_t* array = (int32_t*)address(currentOffset + 8 + nameLength +
+                                           (nameLength % 8));
+        auto client_data = std::vector<int32_t>(array, array + nClientValues);
+        _filters.push_back({filterId, name, client_data});
+        currentOffset += 8 + nameLength + (nameLength % 8) + 4 * nClientValues +
+                         (nClientValues % 2) * 4;
+    }
+}
+
+void H5FilterMsg::_initV2() {
+    size_t currentOffset = 2;
+    for (size_t fId = 0; fId < nFilters(); ++fId) {
+        uint16_t filterId = read_u16(currentOffset);
+        std::string name;
+        size_t flagsOffset = 0;
+        size_t dataClientOffset = 0;
+        if (filterId < 256) {
+            flagsOffset = 2;
+            dataClientOffset = 6;
+            switch (filterId) {
+                case 0:
+                    name = "N/A";
+                    break;
+                case 1:
+                    name = "deflate";
+                    break;
+                case 2:
+                    name = "shuffle";
+                    break;
+                case 3:
+                    name = "fletcher32";
+                    break;
+                case 4:
+                    name = "szip";
+                    break;
+                case 5:
+                    name = "nbit";
+                    break;
+                case 6:
+                    name = "scaleoffset";
+                    break;
+                default:
+                    name = "undefined";
+            }
+        } else {
+            flagsOffset = 4;
+            uint16_t nameLength = read_u16(currentOffset + 2);
+            dataClientOffset = 8 + nameLength;
+            if (nameLength > 0) {
+                if (read_u8(currentOffset + 8 + nameLength) == 0) {
+                    nameLength--;
+                }
+                name = std::string(address() + currentOffset + 8, nameLength);
+            }
+        }
+        uint16_t flags = read_u16(currentOffset + flagsOffset);
+        uint16_t nClientValues = read_u16(currentOffset + flagsOffset + 2);
+        int32_t* array = (int32_t*)address(currentOffset + dataClientOffset);
+        auto client_data = std::vector<int32_t>(array, array + nClientValues);
+        _filters.push_back({filterId, name, client_data});
+        currentOffset += dataClientOffset + 4 * nClientValues;
+    }
 }

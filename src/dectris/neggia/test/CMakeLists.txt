@@ -1,42 +1,79 @@
-#  The MIT License (MIT)
-#
-#  Copyright (c) 2017 Dectris Ltd., Taefernweg 1, 5405 Baden-Daettwil, Switzerland.
-#
-#  Permission is hereby granted, free of charge, to any person obtaining a copy
-#  of this software and associated documentation files (the "Software"), to deal
-#  in the Software without restriction, including without limitation the rights
-#  to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-#  copies of the Software, and to permit persons to whom the Software is
-#  furnished to do so, subject to the following conditions:
-#
-#  The above copyright notice and this permission notice shall be included in all
-#  copies or substantial portions of the Software.
-#
-#  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-#  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-#  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-#  AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-#  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-#  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-#  SOFTWARE.
+# SPDX-License-Identifier: MIT
 
-find_package(DectrisHdf5 REQUIRED)
-include_directories(${DECTRIS_HDF5_INCLUDE_DIRS})
+execute_process(COMMAND
+  "${CMAKE_COMMAND}" -E create_symlink
+  "${CMAKE_CURRENT_SOURCE_DIR}/h5-testfiles"
+  "${CMAKE_CURRENT_BINARY_DIR}/h5-testfiles"
+  )
+add_definitions(-DPATH_TO_XDS_PLUGIN=\"${DECTRIS_NEGGIA_XDS_PLUGIN}\")
 
-find_package(GTest REQUIRED)
-include_directories(${GTEST_INCLUDE_DIRS})
-find_library(GMOCK gmock) # libgmock.a is not found by FindGTest.cmake !!!
-include_directories(${GMOCK_INCLUDE_DIRS})
-set(GTEST_ALL ${GTEST_BOTH_LIBRARIES} ${GMOCK})
-enable_testing()
-
-set(SOURCES H5DatasetTestFixture.cpp bshuf_h5filter.c bshuf_h5filter.h Lz4Filter.hpp)
-
-add_executable(Test_Dataset Test_Dataset.cpp ${SOURCES})
-target_link_libraries(Test_Dataset neggia_static ${DECTRIS_HDF5_LIBRARIES} z ${GTEST_ALL} pthread)
+add_executable(Test_Dataset Test_Dataset.cpp DatasetsFixture.cpp)
+target_link_libraries(Test_Dataset
+  gtest
+  gtest_main
+  neggia_static
+  )
 add_test(Test_Dataset Test_Dataset)
 
-add_executable(Test_XdsPlugin Test_XdsPlugin.cpp ${SOURCES} $<TARGET_OBJECTS:NEGGIA_COMPRESSION_ALGORITHMS>)
-target_link_libraries(Test_XdsPlugin ${DECTRIS_HDF5_LIBRARIES} z dl ${GTEST_ALL} pthread)
-ADD_DEFINITIONS(-DPATH_TO_XDS_PLUGIN=\"${DECTRIS_NEGGIA_XDS_PLUGIN}\")
+add_executable(Test_EigerData Test_EigerData.cpp)
+target_link_libraries(Test_EigerData
+  gtest
+  gtest_main
+  neggia_static
+  )
+add_test(Test_EigerData Test_EigerData)
+
+add_executable(Test_DifferentH5Ver Test_DifferentH5Ver.cpp)
+target_link_libraries(Test_DifferentH5Ver
+  gtest
+  gtest_main
+  neggia_static
+  )
+add_test(Test_DifferentH5Ver Test_DifferentH5Ver)
+
+add_executable(Test_H5DataspaceMsg Test_H5DataspaceMsg.cpp)
+target_link_libraries(Test_H5DataspaceMsg
+  gtest
+  gtest_main
+  neggia_static
+  )
+add_test(Test_H5DataspaceMsg Test_H5DataspaceMsg)
+
+add_executable(Test_H5FilterMsg Test_H5FilterMsg.cpp)
+target_link_libraries(Test_H5FilterMsg
+  gtest
+  gtest_main
+  neggia_static
+  )
+add_test(Test_H5FilterMsg Test_H5FilterMsg)
+
+add_executable(Test_H5ObjectHeader Test_H5ObjectHeader.cpp)
+target_link_libraries(Test_H5ObjectHeader
+  gtest
+  gtest_main
+  neggia_static
+  )
+add_test(Test_H5ObjectHeader Test_H5ObjectHeader)
+
+add_executable(Test_XdsPlugin
+  $<TARGET_OBJECTS:NEGGIA_COMPRESSION_ALGORITHMS>
+  DatasetsFixture.cpp
+  Test_XdsPlugin.cpp
+  )
+target_link_libraries(Test_XdsPlugin
+  dl
+  gtest
+  gtest_main
+  )
 add_test(Test_XdsPlugin Test_XdsPlugin)
+
+add_executable(Test_XdsPluginWithData
+  $<TARGET_OBJECTS:NEGGIA_COMPRESSION_ALGORITHMS>
+  Test_XdsPluginWithData.cpp
+  )
+target_link_libraries(Test_XdsPluginWithData
+  dl
+  gtest
+  gtest_main
+  )
+add_test(Test_XdsPluginWithData Test_XdsPluginWithData)
