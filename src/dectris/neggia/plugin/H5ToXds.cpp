@@ -22,6 +22,7 @@ struct H5DataCache {
     int dimy;
     int datasize;
     int nframesPerDataset;
+    int setValue;
     std::unique_ptr<int32_t[]> mask;
     float xpixelSize;
     float ypixelSize;
@@ -35,40 +36,48 @@ void printVersionInfo() {
               << std::endl;
 }
 
+// CV-20210330: we are (re)setting those marked pixels after looking
+//              at the pixel mask and allow for two types of handling
+//              these.
+//
+//              (1) set them to a negative value (similar to masked pixels)
+//              (2) set them to an overload value
+
 template <class T>
-int32_t applyOverflow(T value);
+int32_t applyOverflow(T value, const size_t setValue);
 
 template <>
-int32_t applyOverflow<uint32_t>(uint32_t value) {
+int32_t applyOverflow<uint32_t>(uint32_t value, const size_t setValue) {
     // XDS uses int32_t pixel values for processing therefore
     // cannot use any pixels from uint32_t >= 2**31
-    // these values must be set to -1.
-    return (value > INT32_MAX) ? -1 : value;
+    // these values must be reset.
+    return (value > INT32_MAX) ? setValue : value;
 }
 
 template <>
-int32_t applyOverflow<uint16_t>(uint16_t value) {
-    // For conversion from uint16_t we only need to set the
-    // 'overflow' value of 0xFFFF to -1. All other values
+int32_t applyOverflow<uint16_t>(uint16_t value, const size_t setValue) {
+    // For conversion from uint16_t we only need to reset the
+    // 'overflow' value of 0xFFFF. All other values
     // from uint16_t are allowed.
-    return (value == 0xFFFF) ? -1 : value;
+    return (value == 0xFFFF) ? setValue : value;
 }
 
 template <>
-int32_t applyOverflow<uint8_t>(uint8_t value) {
-    // For conversion from uint8_t we only need to set the
-    // 'overflow' value of 0xFF to -1. All other values
+int32_t applyOverflow<uint8_t>(uint8_t value, const size_t setValue) {
+    // For conversion from uint8_t we only need to reset the
+    // 'overflow' value of 0xFF. All other values
     // from uint8_t are allowed.
-    return (value == 0xFF) ? -1 : value;
+    return (value == 0xFF) ? setValue : value;
 }
 
 template <class T>
 void applyMaskAndTransformToInt32(const T* indata,
                                   int outdata[],
                                   const int32_t* mask,
-                                  size_t size) {
+                                  size_t size,
+                                  size_t setValue) {
     for (size_t j = 0; j < size; ++j) {
-        outdata[j] = mask[j] ? mask[j] : applyOverflow(indata[j]);
+        outdata[j] = mask[j] ? mask[j] : applyOverflow(indata[j], setValue);
     }
 }
 
@@ -360,17 +369,20 @@ void applyMaskAndTransformToInt32(const H5DataCache* dataCache,
         case 1:
             applyMaskAndTransformToInt32((const uint8_t*)indata, outdata,
                                          dataCache->mask.get(),
-                                         dataCache->dimx * dataCache->dimy);
+                                         dataCache->dimx * dataCache->dimy,
+                                         dataCache->setValue);
             break;
         case 2:
             applyMaskAndTransformToInt32((const uint16_t*)indata, outdata,
                                          dataCache->mask.get(),
-                                         dataCache->dimx * dataCache->dimy);
+                                         dataCache->dimx * dataCache->dimy,
+                                         dataCache->setValue);
             break;
         case 4:
             applyMaskAndTransformToInt32((const uint32_t*)indata, outdata,
                                          dataCache->mask.get(),
-                                         dataCache->dimx * dataCache->dimy);
+                                         dataCache->dimx * dataCache->dimy,
+                                         dataCache->setValue);
             break;
         default: {
             throw H5Error(-3, "NEGGIA ERROR: DATATYPE NOT SUPPORTED");
@@ -408,13 +420,17 @@ void setInfoArray(int info[1024]) {
     info[3] = DECTRIS_H5TOXDS_VERSION_PATCH;      // Version  [Patch]
     info[4] = DECTRIS_H5TOXDS_VERSION_TIMESTAMP;  // Version  [timestamp]
     info[5] = 0; // image number offset
+    info[6] = -1; // marked pixels not already in pixel_mask: reset to this value
 
     char *cenv;
     cenv = getenv("NEGGIA_IMAGE_NUMBER_OFFSET");
     if (cenv!=NULL) {
       info[5] = atoi(cenv);
     }
-
+    cenv = getenv("NEGGIA_RESET_UNMASKED_PIXEL");
+    if (cenv!=NULL) {
+      info[6] = atoi(cenv);
+    }
 }
 
 }  // namespace
@@ -470,6 +486,8 @@ void plugin_get_header(int* nx,
         *qx = dataCache->xpixelSize;
         *qy = dataCache->ypixelSize;
         *number_of_frames = (int)(nimages * ntrigger);
+
+        dataCache->setValue = info[6];
 
     } catch (const H5Error& error) {
         std::cerr << error.what() << std::endl;
